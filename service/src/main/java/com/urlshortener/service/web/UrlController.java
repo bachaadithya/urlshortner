@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.net.URI;
@@ -44,7 +45,7 @@ public class UrlController {
         return urlService.getMetadata(shortCode);
     }
 
-    @GetMapping("/{shortCode}")
+    @RequestMapping(value = "/{shortCode}", method = {RequestMethod.GET, RequestMethod.HEAD})
     public ResponseEntity<Void> redirect(@PathVariable String shortCode) {
         String originalUrl = urlService.resolveOriginalUrl(shortCode);
         HttpHeaders headers = new HttpHeaders();

@@ -42,7 +42,8 @@ public class BloomFilterGatewayFilter implements GlobalFilter, Ordered {
 
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
-        if (exchange.getRequest().getMethod() != HttpMethod.GET) {
+        if (exchange.getRequest().getMethod() != HttpMethod.GET
+                && exchange.getRequest().getMethod() != HttpMethod.HEAD) {
             return chain.filter(exchange);
         }
 
