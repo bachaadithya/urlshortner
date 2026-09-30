@@ -1,0 +1,50 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: url-shortener-gateway
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+  cloud:
+    gateway:
+      default-filters:
+        - name: RequestRateLimiter
+          args:
+            redis-rate-limiter.replenishRate: ${RATE_LIMIT_REPLENISH:50}
+            redis-rate-limiter.burstCapacity: ${RATE_LIMIT_BURST:100}
+            key-resolver: "#{@ipKeyResolver}"
+      routes:
+        - id: create-and-metadata
+          uri: ${SERVICE_URI:http://localhost:8081}
+          predicates:
+            - Path=/api/v1/urls/**
+        - id: redirect
+          uri: ${SERVICE_URI:http://localhost:8081}
+          predicates:
+            - Method=GET
+            - Path=/{shortCode}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+app:
+  bloom:
+    refresh-seconds: 30
+  rate-limit:
+    replenish-rate: 50
+    burst-capacity: 100
+
+logging:
+  level:
+    com.urlshortener.gateway: INFO

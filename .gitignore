@@ -1,0 +1,17 @@
+target/
+.idea/
+*.iml
+.classpath
+.project
+.settings/
+.vscode/
+.tools/
+.m2/
+*.class
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+.DS_Store
+.env
+.env.local
+*.log
+.mvn/wrapper/maven-wrapper.jar

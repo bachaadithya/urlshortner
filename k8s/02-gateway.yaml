@@ -1,0 +1,91 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: url-shortener-gateway
+  namespace: urlshortener
+  labels:
+    app: url-shortener-gateway
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: url-shortener-gateway
+  template:
+    metadata:
+      labels:
+        app: url-shortener-gateway
+    spec:
+      containers:
+        - name: gateway
+          image: registry.digitalocean.com/YOUR_REGISTRY/url-shortener-gateway:1.0.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - secretRef:
+                name: urlshortener-secrets
+            - configMapRef:
+                name: urlshortener-config
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: url-shortener-gateway
+  namespace: urlshortener
+  annotations:
+    service.beta.kubernetes.io/do-loadbalancer-name: "urlshortener-lb"
+    service.beta.kubernetes.io/do-loadbalancer-protocol: "http"
+    service.beta.kubernetes.io/do-loadbalancer-tls-ports: "443"
+    service.beta.kubernetes.io/do-loadbalancer-certificate-id: "YOUR_DO_CERT_ID"
+    service.beta.kubernetes.io/do-loadbalancer-redirect-http-to-https: "true"
+    service.beta.kubernetes.io/do-loadbalancer-healthcheck-path: "/actuator/health"
+spec:
+  type: LoadBalancer
+  selector:
+    app: url-shortener-gateway
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+    - name: https
+      port: 443
+      targetPort: 8080
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: url-shortener-gateway
+  namespace: urlshortener
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: url-shortener-gateway
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

@@ -1,0 +1,83 @@
+# Production-oriented stack for a single DigitalOcean droplet.
+# MongoDB and Redis are NOT published to the public internet — only the gateway is.
+
+services:
+  mongodb:
+    image: mongo:7
+    restart: unless-stopped
+    volumes:
+      - mongo_data:/data/db
+    environment:
+      MONGO_INITDB_DATABASE: urlshortener
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+
+  service:
+    build:
+      context: .
+      dockerfile: service/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      MONGODB_URI: mongodb://mongodb:27017/urlshortener
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      SERVICE_URI: http://service:8081
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    expose:
+      - "8081"
+    networks:
+      - internal
+
+  gateway:
+    build:
+      context: .
+      dockerfile: gateway/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      SERVICE_URI: http://service:8081
+    ports:
+      - "80:8080"
+    depends_on:
+      redis:
+        condition: service_healthy
+      service:
+        condition: service_started
+    networks:
+      - internal
+
+volumes:
+  mongo_data:
+  redis_data:
+
+networks:
+  internal:
+    driver: bridge

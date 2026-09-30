@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: url-shortener-service
+  namespace: urlshortener
+  labels:
+    app: url-shortener-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: url-shortener-service
+  template:
+    metadata:
+      labels:
+        app: url-shortener-service
+    spec:
+      containers:
+        - name: service
+          image: registry.digitalocean.com/YOUR_REGISTRY/url-shortener-service:1.0.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8081
+          envFrom:
+            - secretRef:
+                name: urlshortener-secrets
+            - configMapRef:
+                name: urlshortener-config
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8081
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8081
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: url-shortener-service
+  namespace: urlshortener
+spec:
+  selector:
+    app: url-shortener-service
+  ports:
+    - name: http
+      port: 8081
+      targetPort: 8081
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: url-shortener-service
+  namespace: urlshortener
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: url-shortener-service
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
