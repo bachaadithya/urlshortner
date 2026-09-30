@@ -50,6 +50,8 @@ docker compose up --build
 
 Full steps: [`docs/DROPLET_SETUP.md`](docs/DROPLET_SETUP.md)
 
+CI/CD with GitHub Actions: [`docs/GITHUB_ACTIONS.md`](docs/GITHUB_ACTIONS.md)
+
 ```bash
 ssh root@168.144.158.115
 # install Docker → copy project → cp .env.example .env → docker compose up -d --build

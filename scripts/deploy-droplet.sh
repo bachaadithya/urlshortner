@@ -12,8 +12,10 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 1
 fi
 
-docker compose pull || true
-docker compose up -d --build
+# Build one image at a time to reduce peak memory on small droplets
+docker compose build service
+docker compose build gateway
+docker compose up -d
 docker compose ps
 echo
 echo "Gateway:  http://$(hostname -I | awk '{print $1}')/"

@@ -1,0 +1,57 @@
+name: CD
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to DigitalOcean droplet
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DROPLET_HOST }}
+          username: ${{ secrets.DROPLET_USER }}
+          key: ${{ secrets.DROPLET_SSH_KEY }}
+          port: 22
+          script_stop: true
+          command_timeout: 30m
+          script: |
+            set -euo pipefail
+            APP_DIR="${{ secrets.DROPLET_APP_PATH }}"
+            if [ -z "$APP_DIR" ]; then
+              APP_DIR="/opt/urlshortner"
+            fi
+
+            if [ ! -d "$APP_DIR/.git" ]; then
+              echo "App directory missing: $APP_DIR"
+              echo "Clone once on the droplet: git clone https://github.com/bachaadithya/urlshortner.git $APP_DIR"
+              exit 1
+            fi
+
+            cd "$APP_DIR"
+            git fetch origin main
+            git reset --hard origin/main
+
+            if [ ! -f .env ]; then
+              cp .env.example .env
+              echo "WARNING: created .env from example — set API_KEY and PUBLIC_BASE_URL on the droplet"
+            fi
+
+            # Build one image at a time to reduce peak memory on small droplets
+            docker compose build service
+            docker compose build gateway
+            docker compose up -d
+            docker compose ps
+
+            # Basic smoke check against local gateway
+            sleep 8
+            curl -fsS http://127.0.0.1/actuator/health || curl -fsS http://127.0.0.1:80/actuator/health
+            echo "Deploy finished"
