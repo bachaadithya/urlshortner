@@ -1,11 +1,12 @@
 package com.urlshortener.service.encoding;
 
 /**
- * Encodes positive integers to Base62 (0-9A-Za-z) short codes.
+ * Base62 alphabet helpers used for validation (and legacy encode utilities).
+ * Auto-generated short codes use {@link RandomBase62ShortCodeGenerator}, not sequential IDs.
  */
 public final class Base62Encoder {
 
-    private static final String ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+    public static final String ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
     private static final int BASE = ALPHABET.length();
 
     private Base62Encoder() {
@@ -25,17 +26,6 @@ public final class Base62Encoder {
             n /= BASE;
         }
         return sb.reverse().toString();
-    }
-
-    /**
-     * Pads the encoded value to at least {@code minLength} characters with leading zeros.
-     */
-    public static String encodePadded(long value, int minLength) {
-        String encoded = encode(value);
-        if (encoded.length() >= minLength) {
-            return encoded;
-        }
-        return "0".repeat(minLength - encoded.length()) + encoded;
     }
 
     public static boolean isValidCode(String code) {

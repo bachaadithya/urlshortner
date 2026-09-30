@@ -6,6 +6,7 @@ import com.urlshortener.service.config.AppProperties;
 import com.urlshortener.service.domain.UrlDocument;
 import com.urlshortener.service.dto.CreateUrlRequest;
 import com.urlshortener.service.dto.CreateUrlResponse;
+import com.urlshortener.service.encoding.ShortCodeGenerator;
 import com.urlshortener.service.exception.AliasTakenException;
 import com.urlshortener.service.exception.InvalidAliasException;
 import com.urlshortener.service.exception.UrlNotFoundException;
@@ -48,6 +49,8 @@ class UrlServiceTest {
     private BloomFilterService bloomFilterService;
     @Mock
     private ClickCountService clickCountService;
+    @Mock
+    private ShortCodeGenerator shortCodeGenerator;
 
     private AppProperties appProperties;
     private UrlService urlService;
@@ -59,12 +62,13 @@ class UrlServiceTest {
         appProperties.setShortCodeLength(7);
         appProperties.setMaxGenerationRetries(5);
         appProperties.setReservedAliases(List.of("api", "health"));
-        urlService = new UrlService(urlRepository, urlCache, bloomFilterService, clickCountService, appProperties);
+        urlService = new UrlService(
+                urlRepository, urlCache, bloomFilterService, clickCountService, shortCodeGenerator, appProperties);
     }
 
     @Test
     void createWithGeneratedCodePersistsThenReturnsResponse() {
-        when(urlCache.nextSequenceId()).thenReturn(62L);
+        when(shortCodeGenerator.nextCode()).thenReturn("k9Qm2xL");
         when(urlRepository.insert(any(UrlDocument.class))).thenAnswer(invocation -> {
             UrlDocument doc = invocation.getArgument(0);
             doc.setId("id-1");
@@ -76,12 +80,13 @@ class UrlServiceTest {
 
         CreateUrlResponse response = urlService.create(request, "default");
 
-        assertEquals("0000010", response.getShortCode());
-        assertEquals("https://short.ly/0000010", response.getShortUrl());
+        assertEquals("k9Qm2xL", response.getShortCode());
+        assertEquals("https://short.ly/k9Qm2xL", response.getShortUrl());
         assertEquals("https://example.com/landing", response.getOriginalUrl());
         verify(urlRepository).insert(any(UrlDocument.class));
-        verify(urlCache).put("0000010", "https://example.com/landing");
-        verify(bloomFilterService).add("0000010");
+        verify(urlCache).put("k9Qm2xL", "https://example.com/landing");
+        verify(bloomFilterService).add("k9Qm2xL");
+        verify(urlCache, never()).nextSequenceId();
     }
 
     @Test
@@ -100,6 +105,7 @@ class UrlServiceTest {
         assertTrue(captor.getValue().isCustom());
         assertEquals("https://short.ly/blackfriday", response.getShortUrl());
         verify(urlRepository, never()).existsByShortCode(anyString());
+        verify(shortCodeGenerator, never()).nextCode();
     }
 
     @Test

@@ -24,13 +24,6 @@ class Base62EncoderTest {
     }
 
     @Test
-    void padsToMinimumLength() {
-        assertEquals("0000001", Base62Encoder.encodePadded(1, 7));
-        assertEquals("10", Base62Encoder.encodePadded(62, 2));
-        assertEquals("10", Base62Encoder.encodePadded(62, 1));
-    }
-
-    @Test
     void rejectsNegativeValues() {
         assertThrows(IllegalArgumentException.class, () -> Base62Encoder.encode(-1));
     }

@@ -7,7 +7,7 @@ import com.urlshortener.service.domain.UrlDocument;
 import com.urlshortener.service.dto.CreateUrlRequest;
 import com.urlshortener.service.dto.CreateUrlResponse;
 import com.urlshortener.service.dto.UrlMetadataResponse;
-import com.urlshortener.service.encoding.Base62Encoder;
+import com.urlshortener.service.encoding.ShortCodeGenerator;
 import com.urlshortener.service.exception.AliasTakenException;
 import com.urlshortener.service.exception.InvalidAliasException;
 import com.urlshortener.service.exception.ShortCodeGenerationException;
@@ -32,6 +32,7 @@ public class UrlService {
     private final UrlCache urlCache;
     private final BloomFilterService bloomFilterService;
     private final ClickCountService clickCountService;
+    private final ShortCodeGenerator shortCodeGenerator;
     private final AppProperties appProperties;
 
     public UrlService(
@@ -39,11 +40,13 @@ public class UrlService {
             UrlCache urlCache,
             BloomFilterService bloomFilterService,
             ClickCountService clickCountService,
+            ShortCodeGenerator shortCodeGenerator,
             AppProperties appProperties) {
         this.urlRepository = urlRepository;
         this.urlCache = urlCache;
         this.bloomFilterService = bloomFilterService;
         this.clickCountService = clickCountService;
+        this.shortCodeGenerator = shortCodeGenerator;
         this.appProperties = appProperties;
     }
 
@@ -112,14 +115,13 @@ public class UrlService {
     }
 
     /**
-     * Generates Base62 codes from a Redis sequence and inserts atomically.
-     * Retries only on unexpected duplicate of a generated code.
+     * Allocates a random Base62 code via {@link ShortCodeGenerator} and inserts atomically.
+     * Collisions (extremely rare) retry; uniqueness is enforced by MongoDB's unique index.
      */
     UrlDocument insertGeneratedCode(String originalUrl, String apiKeyId) {
         int maxRetries = appProperties.getMaxGenerationRetries();
         for (int attempt = 1; attempt <= maxRetries; attempt++) {
-            long seq = urlCache.nextSequenceId();
-            String shortCode = Base62Encoder.encodePadded(seq, appProperties.getShortCodeLength());
+            String shortCode = shortCodeGenerator.nextCode();
             if (isReserved(shortCode)) {
                 continue;
             }
