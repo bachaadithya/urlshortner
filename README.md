@@ -1,94 +1,250 @@
-# URL Shortener (Spring Boot + DigitalOcean)
+# URL Shortener
 
-Production-oriented URL shortener with:
+Spring Boot URL shortener with API gateway, MongoDB, Redis caching, random Base62 codes, and atomic custom-alias handling. Deployable on a DigitalOcean droplet with Docker Compose and GitHub Actions CI/CD.
 
-- **Spring Cloud Gateway** (edge routing, rate limiting, Bloom filter rejection)
-- **Spring Boot service** (create / redirect / metadata)
-- **MongoDB** unique `shortCode` for atomic custom-alias claims
-- **Redis** cache-aside for hot redirects + shared Bloom filter bits
-- **DOKS-ready** manifests and Docker images
+## Architecture
+
+```
+Client
+  └─► Gateway (:80) ── Bloom filter + rate limit
+        └─► Service (:8081)
+              ├─► MongoDB   (source of truth, unique shortCode)
+              └─► Redis     (redirect cache + bloom bits)
+```
+
+| Module | Role |
+|--------|------|
+| `gateway/` | Spring Cloud Gateway — routes, rate limit, Bloom filter |
+| `service/` | Create / redirect / metadata APIs |
+| `k8s/` | Optional DOKS manifests |
+| `docs/` | Droplet + GitHub Actions guides |
 
 ## Endpoints
 
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| `POST` | `/api/v1/urls` | `X-API-Key` | Create short URL (optional `customAlias`) |
-| `GET` | `/{shortCode}` | none | `302` redirect (cache-aside) |
-| `GET` | `/api/v1/urls/{shortCode}` | `X-API-Key` | Metadata |
+| Method | Path | Auth | Result |
+|--------|------|------|--------|
+| `POST` | `/api/v1/urls` | `X-API-Key` | Create short URL (`201`) |
+| `GET` | `/{shortCode}` | none | Redirect (`302`) |
+| `GET` | `/api/v1/urls/{shortCode}` | `X-API-Key` | Metadata JSON |
 
-### Create examples
+### Request / response examples
+
+**Create (random code)**
 
 ```bash
-# Auto Base62 code
-curl -s -X POST http://localhost:8080/api/v1/urls \
+curl -s -X POST http://HOST/api/v1/urls \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: dev-api-key-change-me" \
-  -d '{"url":"https://example.com/very/long/path"}'
+  -H "X-API-Key: YOUR_API_KEY" \
+  -d '{"url":"https://github.com/bachaadithya/urlshortner"}'
+```
 
-# Custom alias (atomic — concurrent claims → one 201, one 409 ALIAS_TAKEN)
-curl -s -X POST http://localhost:8080/api/v1/urls \
+```json
+{
+  "shortCode": "k9Qm2xL",
+  "shortUrl": "http://HOST/k9Qm2xL",
+  "originalUrl": "https://github.com/bachaadithya/urlshortner",
+  "custom": false,
+  "createdAt": "2026-09-30T08:00:00Z"
+}
+```
+
+**Create (custom alias)**
+
+```bash
+curl -s -X POST http://HOST/api/v1/urls \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: dev-api-key-change-me" \
-  -d '{"url":"https://shop.example.com/sale","customAlias":"blackfriday"}'
+  -H "X-API-Key: YOUR_API_KEY" \
+  -d '{"url":"https://example.com/sale","customAlias":"blackfriday"}'
 ```
 
-## Architecture highlights
-
-- **Race-safe custom aliases**: `insert` only + Mongo unique index. No check-then-insert.
-- **Cache-aside**: Redis `url:{code}` → on miss load Mongo → populate Redis.
-- **Bloom filter at gateway**: never-created codes rejected with `404` before the service/DB (cache penetration protection). Service updates Redis key `url:bloom` and publishes `url:bloom:reload`.
-- **Thread-safe clicks**: Mongo `$inc` via async `ClickCountService`.
-
-## Local run
+**Redirect**
 
 ```bash
-docker compose up --build
-# API on http://localhost:80  (gateway maps host 80 → container 8080)
+curl -I http://HOST/blackfriday
+# HTTP/1.1 302 Found
+# Location: https://example.com/sale
 ```
 
-## DigitalOcean Droplet (your IP)
-
-Full steps: [`docs/DROPLET_SETUP.md`](docs/DROPLET_SETUP.md)
-
-CI/CD with GitHub Actions: [`docs/GITHUB_ACTIONS.md`](docs/GITHUB_ACTIONS.md)
+**Metadata**
 
 ```bash
-ssh root@168.144.158.115
-# install Docker → copy project → cp .env.example .env → docker compose up -d --build
+curl -s http://HOST/api/v1/urls/blackfriday \
+  -H "X-API-Key: YOUR_API_KEY"
 ```
 
-Or with local Mongo/Redis (dev without Docker apps):
+### PowerShell note
+
+Use `curl.exe` and escaped quotes:
+
+```powershell
+curl.exe -s -X POST "http://HOST/api/v1/urls" `
+  -H "Content-Type: application/json" `
+  -H "X-API-Key: YOUR_API_KEY" `
+  -d "{\"url\":\"https://example.com\"}"
+```
+
+## How it works
+
+### Request lifecycle diagrams
+
+**Create short URL** (`POST /api/v1/urls`)
+
+![Create URL request lifecycle](docs/diagrams/create.svg)
+
+**Redirect** (`GET /{shortCode}`)
+
+![Redirect request lifecycle](docs/diagrams/redirect.svg)
+
+**Metadata** (`GET /api/v1/urls/{shortCode}`)
+
+![Metadata request lifecycle](docs/diagrams/metadata.svg)
+
+**Data stores**
+
+![Data flow across gateway service MongoDB Redis](docs/diagrams/dataflow.svg)
+
+### 1. Custom alias collisions (race-safe)
+
+Two users claiming `blackfriday` at the same time must not both succeed.
+
+**Wrong approach:** check if alias exists → then insert (TOCTOU race).
+
+**This app:** single atomic `insert` + MongoDB **unique index** on `shortCode`.
+
+- Winner → `201 Created`
+- Loser → Mongo `DuplicateKeyException` → `409` with code `ALIAS_TAKEN`
+
+Code: `UrlService.insertCustomAlias`, index in `MongoIndexConfig` / `@Indexed(unique = true)`.
+
+### 2. Building a short URL (auto)
+
+If no `customAlias` is sent:
+
+1. `RandomBase62ShortCodeGenerator` picks a **random** Base62 string (not sequential).
+2. Insert into Mongo; on rare collision, retry.
+3. Write Redis cache + Bloom filter.
+4. Return response **only after** persist succeeds.
+5. `shortUrl` = `PUBLIC_BASE_URL + "/" + shortCode`.
+
+### 3. Redirection
+
+`GET /{shortCode}`:
+
+1. Gateway Bloom filter: unknown codes → `404` (no DB hit).
+2. Service cache-aside: Redis `url:{code}` → else Mongo → populate Redis.
+3. Return `302` with `Location: originalUrl`.
+4. Click count incremented asynchronously with Mongo `$inc`.
+
+### 4. Metadata
+
+`GET /api/v1/urls/{shortCode}` loads the Mongo document and returns `shortCode`, `shortUrl`, `originalUrl`, `custom`, `createdAt`, `expiresAt`, `clickCount`.
+
+### 5. Input validation
+
+Bean Validation on `CreateUrlRequest` (`@Valid` in controller):
+
+- `url` — required, http(s), max 2048 chars
+- `customAlias` — optional, 3–32 chars, `[A-Za-z0-9_-]+`
+
+Extra checks in `UrlService.validateCustomAlias` (reserved words like `api`, `health`).
+
+### 6. Error handling
+
+`GlobalExceptionHandler` maps exceptions to JSON:
+
+| HTTP | Code | When |
+|------|------|------|
+| 400 | `VALIDATION_ERROR` / `INVALID_ALIAS` / `BAD_REQUEST` | Bad input |
+| 401 | `INVALID_API_KEY` | Missing/wrong `X-API-Key` |
+| 404 | `URL_NOT_FOUND` | Unknown short code |
+| 409 | `ALIAS_TAKEN` | Custom alias already claimed |
+| 503 | `SHORT_CODE_UNAVAILABLE` | Could not allocate random code |
+| 500 | `INTERNAL_ERROR` | Unexpected failure |
+
+## Quick start (local)
 
 ```bash
-export PATH="/workspaces/urlshortner/.tools/maven/bin:$PATH"
-mvn -q test
+cp .env.example .env
+# edit API_KEY / PUBLIC_BASE_URL if you want
+
+docker compose up -d --build
+docker compose ps
+
+curl -s http://localhost/actuator/health
 ```
 
-## DigitalOcean deploy
+API base URL locally: `http://localhost` (gateway maps host **80** → container 8080).
 
-1. Create **DOKS**, **Managed MongoDB**, **Managed Caching (Redis)** in the same region/VPC.
-2. Build & push images to **DO Container Registry**:
+API key: value of `API_KEY` in `.env` (default from `.env.example`).
+
+### Unit tests
 
 ```bash
-docker build -f service/Dockerfile -t registry.digitalocean.com/<registry>/url-shortener-service:1.0.0 .
-docker build -f gateway/Dockerfile -t registry.digitalocean.com/<registry>/url-shortener-gateway:1.0.0 .
-doctl registry login
-docker push registry.digitalocean.com/<registry>/url-shortener-service:1.0.0
-docker push registry.digitalocean.com/<registry>/url-shortener-gateway:1.0.0
+mvn -B test
 ```
 
-3. Edit secrets/config in [`k8s/00-namespace-secrets.yaml`](k8s/00-namespace-secrets.yaml), image names in the Deployments, then:
+## Droplet setup (DigitalOcean)
+
+Full guide: [docs/DROPLET_SETUP.md](docs/DROPLET_SETUP.md)
 
 ```bash
-kubectl apply -f k8s/
+ssh root@YOUR_DROPLET_IP
+
+# Install Docker once
+curl -fsSL https://get.docker.com | sh
+ufw allow OpenSSH && ufw allow 80/tcp && ufw --force enable
+
+# Clone and configure
+git clone https://github.com/bachaadithya/urlshortner.git /opt/urlshortner
+cd /opt/urlshortner
+cp .env.example .env
+nano .env   # PUBLIC_BASE_URL=http://YOUR_IP  and API_KEY=...
+
+# Start (build one service at a time if RAM is low)
+docker compose build service
+docker compose build gateway
+docker compose up -d
+docker compose ps
 ```
 
-4. Point your domain at the DO Load Balancer created by the gateway `Service` (`type: LoadBalancer`).
+Smoke test:
 
-## Module layout
+```bash
+curl http://YOUR_IP/actuator/health
 
+curl -s -X POST http://YOUR_IP/api/v1/urls \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: YOUR_API_KEY" \
+  -d '{"url":"https://example.com"}'
 ```
-gateway/   Spring Cloud Gateway + BloomFilterGatewayFilter
-service/   Create / redirect / metadata + Base62 + Redis + Mongo
-k8s/       DOKS Deployments, Services, HPA, DO LB annotations
+
+## GitHub Actions CI/CD
+
+| Workflow | When | Does |
+|----------|------|------|
+| CI | push/PR to `main` | Maven tests |
+| CD | push to `main` | SSH → git pull → rebuild containers |
+
+Setup secrets + SSH key: [docs/GITHUB_ACTIONS.md](docs/GITHUB_ACTIONS.md)
+
+Required secrets: `DROPLET_HOST`, `DROPLET_USER`, `DROPLET_SSH_KEY`.
+
+## Project layout
+
+```text
+gateway/     Spring Cloud Gateway + BloomFilterGatewayFilter
+service/     REST APIs, UrlService, random Base62, Redis, Mongo
+scripts/     deploy-droplet.sh
+k8s/         optional Kubernetes manifests
+docs/        droplet + CI/CD guides
+.env.example environment template
+```
+
+## Useful commands
+
+```bash
+docker compose ps
+docker compose logs -f gateway service
+docker compose restart service gateway
+grep API_KEY .env
 ```

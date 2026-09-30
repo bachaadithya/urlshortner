@@ -1,0 +1,14 @@
+sequenceDiagram
+  participant Client
+  participant Gateway
+  participant Service
+  participant Mongo as MongoDB
+  Client->>Gateway: GET /api/v1/urls/code + X-API-Key
+  Gateway->>Service: forward
+  Service->>Service: validate API key
+  Service->>Mongo: findByShortCode
+  alt missing
+    Service-->>Client: 404 URL_NOT_FOUND
+  else found
+    Service-->>Client: 200 metadata JSON
+  end

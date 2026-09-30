@@ -1,0 +1,32 @@
+sequenceDiagram
+  participant Client
+  participant Gateway
+  participant Bloom as BloomFilter
+  participant Service
+  participant Redis
+  participant Mongo as MongoDB
+  Client->>Gateway: GET /k9Qm2xL
+  Gateway->>Bloom: mightContain code
+  alt definitely not present
+    Bloom-->>Gateway: false
+    Gateway-->>Client: 404 URL_NOT_FOUND
+  else maybe present
+    Bloom-->>Gateway: true
+    Gateway->>Service: forward
+    Service->>Redis: GET url:k9Qm2xL
+    alt cache hit
+      Redis-->>Service: originalUrl
+    else cache miss
+      Redis-->>Service: empty
+      Service->>Mongo: findByShortCode
+      alt not found
+        Mongo-->>Service: empty
+        Service-->>Client: 404
+      else found
+        Mongo-->>Service: document
+        Service->>Redis: SET url:code TTL
+      end
+    end
+    Service->>Mongo: async clickCount inc
+    Service-->>Client: 302 Location originalUrl
+  end

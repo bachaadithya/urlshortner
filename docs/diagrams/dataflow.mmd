@@ -1,0 +1,9 @@
+flowchart LR
+  Client --> Gateway
+  Gateway -->|"Bloom check redirects"| Redis
+  Gateway --> Service
+  Service -->|"persist URLs unique shortCode"| MongoDB
+  Service -->|"cache-aside redirects"| Redis
+  Service -->|"bloom updates"| Redis
+  MongoDB -->|"source of truth"| Service
+  Redis -->|"hot path"| Service

@@ -1,0 +1,29 @@
+sequenceDiagram
+  participant Client
+  participant Gateway
+  participant Service
+  participant Mongo as MongoDB
+  participant Redis
+  Client->>Gateway: POST /api/v1/urls + X-API-Key
+  Gateway->>Service: forward
+  Service->>Service: validate body and API key
+  alt customAlias provided
+    Service->>Mongo: insert shortCode=alias unique
+    alt duplicate key
+      Mongo-->>Service: E11000
+      Service-->>Client: 409 ALIAS_TAKEN
+    else success
+      Mongo-->>Service: saved
+    end
+  else auto generate
+    Service->>Service: SecureRandom Base62 code
+    Service->>Mongo: insert shortCode
+    alt rare collision
+      Mongo-->>Service: E11000
+      Service->>Service: retry new code
+    else success
+      Mongo-->>Service: saved
+    end
+  end
+  Service->>Redis: cache url:code and update bloom
+  Service-->>Client: 201 shortUrl shortCode
