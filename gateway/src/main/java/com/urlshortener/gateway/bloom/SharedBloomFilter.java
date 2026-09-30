@@ -26,6 +26,7 @@ public class SharedBloomFilter {
 
     public static final String REDIS_KEY = "url:bloom";
     public static final String BLOOM_CHANNEL = "url:bloom:reload";
+    public static final String URL_CACHE_PREFIX = "url:";
 
     private static final Logger log = LoggerFactory.getLogger(SharedBloomFilter.class);
 
@@ -35,20 +36,23 @@ public class SharedBloomFilter {
 
     public SharedBloomFilter(
             ReactiveStringRedisTemplate redis,
-            @Value("${app.bloom.refresh-seconds:30}") long refreshSeconds) {
+            @Value("${app.bloom.refresh-seconds:5}") long refreshSeconds) {
         this.redis = redis;
-        this.refreshInterval = Duration.ofSeconds(refreshSeconds);
+        this.refreshInterval = Duration.ofSeconds(Math.max(1, refreshSeconds));
     }
 
     @PostConstruct
     public void start() {
         reload().subscribe();
         redis.listenToChannel(BLOOM_CHANNEL)
+                .doOnNext(msg -> log.debug("Bloom reload signal received"))
                 .flatMap(msg -> reload())
+                .onErrorContinue((err, obj) -> log.warn("Bloom pub/sub error", err))
                 .subscribe();
         Mono.delay(refreshInterval)
                 .repeat()
                 .flatMap(tick -> reload())
+                .onErrorContinue((err, obj) -> log.warn("Bloom refresh error", err))
                 .subscribe();
     }
 
@@ -59,6 +63,24 @@ public class SharedBloomFilter {
             return true;
         }
         return filter.mightContain(shortCode);
+    }
+
+    /**
+     * Stale in-memory bloom can miss newly created codes. Reload from Redis, re-check bloom,
+     * and fall back to the redirect cache key written on create.
+     */
+    public Mono<Boolean> mightContainFresh(String shortCode) {
+        if (mightContain(shortCode)) {
+            return Mono.just(true);
+        }
+        return reload()
+                .then(Mono.fromCallable(() -> mightContain(shortCode)))
+                .flatMap(present -> {
+                    if (Boolean.TRUE.equals(present)) {
+                        return Mono.just(true);
+                    }
+                    return redis.hasKey(URL_CACHE_PREFIX + shortCode).defaultIfEmpty(false);
+                });
     }
 
     public Mono<Void> reload() {

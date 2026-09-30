@@ -23,7 +23,7 @@ import java.util.Set;
 import java.util.regex.Pattern;
 
 /**
- * Rejects GET /{shortCode} requests that the shared Bloom filter knows were never created,
+ * Rejects GET /{shortCode} requests that are known-absent (bloom + cache check),
  * preventing cache-penetration attacks from reaching MongoDB.
  */
 @Component
@@ -52,10 +52,13 @@ public class BloomFilterGatewayFilter implements GlobalFilter, Ordered {
         }
 
         String shortCode = path.substring(1);
-        if (!sharedBloomFilter.mightContain(shortCode)) {
-            return writeNotFound(exchange, shortCode);
-        }
-        return chain.filter(exchange);
+        return sharedBloomFilter.mightContainFresh(shortCode)
+                .flatMap(allowed -> {
+                    if (!Boolean.TRUE.equals(allowed)) {
+                        return writeNotFound(exchange, shortCode);
+                    }
+                    return chain.filter(exchange);
+                });
     }
 
     private boolean shouldSkip(String path) {

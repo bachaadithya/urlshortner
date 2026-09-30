@@ -37,7 +37,7 @@ class BloomFilterGatewayFilterTest {
 
     @Test
     void rejectsUnknownShortCodeWithoutForwarding() {
-        when(sharedBloomFilter.mightContain("randombot")).thenReturn(false);
+        when(sharedBloomFilter.mightContainFresh("randombot")).thenReturn(Mono.just(false));
         MockServerWebExchange exchange = MockServerWebExchange.from(
                 MockServerHttpRequest.get("/randombot").build());
 
@@ -50,7 +50,7 @@ class BloomFilterGatewayFilterTest {
 
     @Test
     void forwardsWhenBloomSaysMaybePresent() {
-        when(sharedBloomFilter.mightContain("promo2026")).thenReturn(true);
+        when(sharedBloomFilter.mightContainFresh("promo2026")).thenReturn(Mono.just(true));
         when(chain.filter(any())).thenReturn(Mono.empty());
         MockServerWebExchange exchange = MockServerWebExchange.from(
                 MockServerHttpRequest.get("/promo2026").build());
@@ -71,6 +71,6 @@ class BloomFilterGatewayFilterTest {
                 .verifyComplete();
 
         verify(chain).filter(exchange);
-        verify(sharedBloomFilter, never()).mightContain(any());
+        verify(sharedBloomFilter, never()).mightContainFresh(any());
     }
 }

@@ -40,7 +40,7 @@ management:
 
 app:
   bloom:
-    refresh-seconds: 30
+    refresh-seconds: 5
   rate-limit:
     replenish-rate: 50
     burst-capacity: 100
